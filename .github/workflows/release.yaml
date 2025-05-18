@@ -1,0 +1,138 @@
+name: Version Bump and Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  run-tests:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Validate PR title format
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if [[ ! "$TITLE" =~ ^(patch|minor|major): ]]; then
+            echo "❌ PR title must start with 'patch:', 'minor:', or 'major:'."
+            echo "Your title: '$TITLE'"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]  # Or customize depending on your project setup
+          pip install toml
+
+      - name: Run tests
+        run: |
+          pytest
+
+  update-version:
+    needs: run-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Extract version bump type from PR title
+        id: extract_type
+        run: |
+          echo "PR Title: ${{ github.event.pull_request.title }}"
+          TITLE="${{ github.event.pull_request.title }}"
+          echo $TITLE
+          TYPE="patch"
+          if [[ "$TITLE" == major:* ]]; then
+            TYPE="major"
+          elif [[ "$TITLE" == minor:* ]]; then
+            TYPE="minor"
+          fi
+          echo "TYPE IS = $TYPE"
+          echo "bump_type=$TYPE" >> $GITHUB_OUTPUT
+
+
+      - name: Bump version in version.txt
+        id: bump_version
+        run: |
+          python .github/scripts/bump_version.py ${{ steps.extract_type.outputs.bump_type }}
+
+      - name: Set up Git credentials
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf https://github.com/
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add version.txt
+          git commit -m "Bump version: ${{ steps.extract_type.outputs.bump_type }}" || echo "No changes to commit"
+          git push origin HEAD
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepend to CHANGELOG.md
+        run: |
+          VERSION=$(cat version.txt)
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          DATE=$(date +'%Y-%m-%d')
+      
+          TEMP_FILE=$(mktemp)
+      
+          {
+            echo "## #$PR_NUMBER - v$VERSION - $PR_TITLE - ($DATE)"
+            echo ""
+            echo "$PR_BODY"
+            echo ""
+            cat CHANGELOG.md
+          } > "$TEMP_FILE"
+      
+          mv "$TEMP_FILE" CHANGELOG.md
+
+      - name: Commit and push changelog update
+        run: |
+          git add CHANGELOG.md
+          git commit -m "docs: update changelog for PR #${{ github.event.pull_request.number }}"
+          git pull --rebase origin main
+          git push origin main
+
+  release-tag:
+    needs: update-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Get new version
+        id: get_version
+        run: |
+          git pull --rebase origin main
+          VERSION=$(cat version.txt)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create git tag
+        run: |
+          git tag v${{ steps.get_version.outputs.version }}
+          git push origin v${{ steps.get_version.outputs.version }}

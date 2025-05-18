@@ -1,0 +1,45 @@
+name: CI - Run Tests, Lint with Black and Isort
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Validate PR title format
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          if [[ ! "$TITLE" =~ ^(patch|minor|major): ]]; then
+            echo "❌ PR title must start with 'patch:', 'minor:', or 'major:'."
+            echo "Your title: '$TITLE'"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Check import order with isort
+        run: |
+          isort . --check-only --diff
+
+      - name: Check formatting with black
+        run: |
+          black . --check --diff
+
+      - name: Run tests
+        run: |
+          pytest
