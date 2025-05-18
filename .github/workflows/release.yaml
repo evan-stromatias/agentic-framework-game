@@ -20,15 +20,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate PR title format
-        run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          if [[ ! "$TITLE" =~ ^(patch|minor|major): ]]; then
-            echo "❌ PR title must start with 'patch:', 'minor:', or 'major:'."
-            echo "Your title: '$TITLE'"
-            exit 1
-          fi
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
